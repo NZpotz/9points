@@ -34,16 +34,8 @@
     .badge{ font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
     .ok{ color:var(--good); border-color:rgba(52,211,153,.35); }
 
-    .strokeInput{
-      background:#142243;
-      border-color:rgba(94,234,212,.30);
-      box-shadow: inset 0 0 0 1px rgba(0,0,0,.15);
-    }
-    .strokeInput:focus{
-      outline:none;
-      border-color:rgba(94,234,212,.75);
-      box-shadow: 0 0 0 3px rgba(94,234,212,.18);
-    }
+    .strokeInput{ background:#142243; border-color:rgba(94,234,212,.30); box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+    .strokeInput:focus{ outline:none; border-color:rgba(94,234,212,.75); box-shadow: 0 0 0 3px rgba(94,234,212,.18); }
 
     .holes{ display:flex; flex-direction:column; gap:10px; }
     .holeCard{ background:var(--dark); border:1px solid var(--line); border-radius:12px; padding:10px; }
@@ -59,12 +51,7 @@
 
     .num{ font-variant-numeric: tabular-nums; }
 
-    .leader{
-      background:var(--yellow);
-      color:#0b1220;
-      font-weight:800;
-      border-radius:8px;
-    }
+    .leader{ background:var(--yellow); color:#0b1220; font-weight:800; border-radius:8px; }
   </style>
 </head>
 <body>
@@ -106,7 +93,7 @@
 
       <div style="height:10px;"></div>
       <div class="small">
-        Accumulated totals appear only once a hole has all three strokes entered. Latest completed hole shows current leaders (yellow).
+        Scoring: normal is 5 / 3 / 1 with ties splitting. Special rule: if one player is 2 strokes better than both others, they get 9 points for the hole.
       </div>
     </div>
 
@@ -129,7 +116,8 @@
 <script>
   const POINTS = [5, 3, 1];
 
-  // Bumped key so old saved scores are ignored (fresh start after update)
+  // Keep v2 so your current published link stays consistent, but note: users may have old data in this key.
+  // If you want a forced reset again later, bump to v3.
   const STORAGE_KEY = 'ninepoints_golf_v2';
 
   const DEFAULT_NAMES = ["player 1", "player 2", "player 3"];
@@ -142,18 +130,13 @@
   };
 
   const el = (id)=>document.getElementById(id);
-
   const advanceTimers = new Map();
 
   function escapeHtml(s){
-    return String(s).replace(/[&<>"']/g, m => ({
-      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-    }[m]));
+    return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   }
 
-  function safeParse(json){
-    try { return JSON.parse(json); } catch { return null; }
-  }
+  function safeParse(json){ try { return JSON.parse(json); } catch { return null; } }
 
   function saveState(){
     const payload = { holes: state.holes, names: state.names, strokes: state.strokes };
@@ -227,10 +210,29 @@
     }
   }
 
+  // UPDATED scoring rule:
+  // - If there is a single low score that is at least 2 strokes better than BOTH other players, award 9/0/0.
+  // - Otherwise use 5/3/1 with ties splitting.
   function computeHolePoints(strokes){
     if(strokes.some(v => v === null || v === "" || Number.isNaN(v))) return null;
 
-    const indexed = strokes.map((s,i)=>({s:Number(s), i})).sort((a,b)=>a.s-b.s);
+    const s = strokes.map(Number);
+
+    // Special rule check
+    const minVal = Math.min(...s);
+    const minIdxs = s.map((v,i)=>({v,i})).filter(o => o.v === minVal).map(o => o.i);
+    if(minIdxs.length === 1){
+      const winner = minIdxs[0];
+      const others = s.filter((_,i)=>i!==winner);
+      if(others.every(v => v - minVal >= 2)){
+        const out = [0,0,0];
+        out[winner] = 9;
+        return out;
+      }
+    }
+
+    // Default 5/3/1 with tie splitting
+    const indexed = s.map((v,i)=>({s:v, i})).sort((a,b)=>a.s-b.s);
     const holePts = [0,0,0];
 
     let k = 0;
@@ -263,11 +265,11 @@
     const totalPoints  = [0,0,0];
 
     for(let h=0; h<state.holes; h++){
-      const s = state.strokes[h];
-      const pts = computeHolePoints(s);
+      const st = state.strokes[h];
+      const pts = computeHolePoints(st);
       if(!pts) continue;
       for(let p=0;p<3;p++){
-        totalStrokes[p] += Number(s[p]);
+        totalStrokes[p] += Number(st[p]);
         totalPoints[p]  += pts[p];
       }
     }
@@ -322,15 +324,15 @@
     const cumPoints  = [0,0,0];
 
     for(let h=0; h<state.holes; h++){
-      const s = state.strokes[h];
-      const holePts = computeHolePoints(s);
+      const st = state.strokes[h];
+      const holePts = computeHolePoints(st);
       const complete = !!holePts;
 
       const nextCumStrokes = [...cumStrokes];
       const nextCumPoints  = [...cumPoints];
       if(complete){
         for(let p=0;p<3;p++){
-          nextCumStrokes[p] += Number(s[p]);
+          nextCumStrokes[p] += Number(st[p]);
           nextCumPoints[p]  += holePts[p];
         }
       }
@@ -377,7 +379,7 @@
         inp.className = "strokeInput";
         inp.dataset.hole = String(h);
         inp.dataset.player = String(p);
-        inp.value = s[p] ?? "";
+        inp.value = st[p] ?? "";
 
         inp.addEventListener("input", ()=>{
           const v = inp.value === "" ? null : Number(inp.value);
@@ -445,14 +447,14 @@
     const cumPoints  = [0,0,0];
 
     for(let h=0; h<state.holes; h++){
-      const s = state.strokes[h];
-      const pts = computeHolePoints(s);
+      const st = state.strokes[h];
+      const pts = computeHolePoints(st);
 
-      lines.push([h+1, "Strokes", s[0] ?? "", s[1] ?? "", s[2] ?? ""].join(","));
+      lines.push([h+1, "Strokes", st[0] ?? "", st[1] ?? "", st[2] ?? ""].join(","));
 
       if(pts){
         for(let p=0;p<3;p++){
-          cumStrokes[p] += Number(s[p]);
+          cumStrokes[p] += Number(st[p]);
           cumPoints[p]  += pts[p];
         }
         lines.push([h+1, "Strokes total", cumStrokes[0], cumStrokes[1], cumStrokes[2]].join(","));
@@ -463,7 +465,6 @@
         lines.push([h+1, "Points (hole)", "", "", ""].join(","));
         lines.push([h+1, "Points total", "", "", ""].join(","));
       }
-
       lines.push("");
     }
 
@@ -517,7 +518,6 @@
 
   el("export").addEventListener("click", exportCSV);
 
-  // Initial: start fresh if no v2 data; otherwise load v2
   const loaded = loadState();
   if(!loaded){
     initStrokes();
